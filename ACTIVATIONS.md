@@ -116,8 +116,7 @@ Each `batch_*_y.pt` file for CLT training contains:
 
 ## Notes
 
-- **PLT Format**: Current activations are in PLT (Per-Layer Transcoder) format
-- **CLT Format**: Need to re-capture with multi-target format for true CLT training
+- **CLT Format**: Activations should be captured with multi-target format for CLT training
 - **Storage**: Keep activations outside Git (use `.gitignore`)
 - **Sharing**: Use Hugging Face Hub for large activation datasets
 

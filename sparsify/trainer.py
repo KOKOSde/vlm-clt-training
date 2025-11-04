@@ -70,12 +70,20 @@ class Trainer:
         # Store the whole model, including any potential causal LM wrapper
         self.model = model
 
+        # Get base model (VLMs have different structure)
+        base_model = model
+        if hasattr(model, 'language_model'):
+            # LLaVA-style: model.language_model.model.layers
+            base_model = model.language_model
+        elif hasattr(model, 'base_model'):
+            base_model = model.base_model
+        
         if cfg.hookpoints:
             assert not cfg.layers, "Cannot specify both `hookpoints` and `layers`."
 
             # Replace wildcard patterns
             raw_hookpoints = []
-            for name, _ in model.base_model.named_modules():
+            for name, _ in model.named_modules():
                 if any(fnmatchcase(name, pat) for pat in cfg.hookpoints):
                     raw_hookpoints.append(name)
 
@@ -84,7 +92,11 @@ class Trainer:
         else:
             # If no layers are specified, train on all of them
             if not cfg.layers:
-                N = model.config.num_hidden_layers
+                # For VLMs, get config from language model
+                if hasattr(base_model, 'config'):
+                    N = base_model.config.num_hidden_layers
+                else:
+                    N = model.config.num_hidden_layers
                 cfg.layers = list(range(0, N))
 
             # Now convert layers to hookpoints
@@ -459,7 +471,11 @@ class Trainer:
             x = self.input_ids_to_mesh(batch["input_ids"])
 
             with self.implicit_replication():
-                clean_loss = self.model(x, labels=x).loss
+                # Pass pixel_values if present (for VLMs)
+                model_kwargs = {"input_ids": x, "labels": x}
+                if "pixel_values" in batch:
+                    model_kwargs["pixel_values"] = batch["pixel_values"].to(device)
+                clean_loss = self.model(**model_kwargs).loss
             if rank_zero:
                 print(f"Initial CE loss: {clean_loss.item():.4f}")
 
@@ -709,11 +725,13 @@ class Trainer:
                     if self.cfg.loss_fn == "kl-fvu"
                     else []
                 )
-                clean_logits = (
-                    self.model(x).logits
-                    if self.cfg.loss_fn in ("kl", "kl-fvu")
-                    else None
-                )
+                clean_logits = None
+                if self.cfg.loss_fn in ("kl", "kl-fvu"):
+                    # Pass pixel_values if present (for VLMs)
+                    model_kwargs = {"input_ids": x}
+                    if "pixel_values" in batch:
+                        model_kwargs["pixel_values"] = batch["pixel_values"].to(device)
+                    clean_logits = self.model(**model_kwargs).logits
                 for handle in handles:
                     handle.remove()
                 clean_probs = (
@@ -738,14 +756,22 @@ class Trainer:
                 with self.implicit_replication():
                     match self.cfg.loss_fn:
                         case "ce":
-                            ce = self.model(x, labels=x).loss
+                            # Pass pixel_values if present (for VLMs)
+                            model_kwargs = {"input_ids": x, "labels": x}
+                            if "pixel_values" in batch:
+                                model_kwargs["pixel_values"] = batch["pixel_values"].to(device)
+                            ce = self.model(**model_kwargs).loss
                             ce.div(acc_steps).backward()
 
                             avg_ce += float(ce.detach() / denom)
 
                             avg_losses = avg_ce
                         case "kl" | "kl-fvu":
-                            dirty_lps = self.model(x).logits.log_softmax(dim=-1)
+                            # Pass pixel_values if present (for VLMs)
+                            model_kwargs = {"input_ids": x}
+                            if "pixel_values" in batch:
+                                model_kwargs["pixel_values"] = batch["pixel_values"].to(device)
+                            dirty_lps = self.model(**model_kwargs).logits.log_softmax(dim=-1)
                             kl = torch.sum(
                                 clean_probs
                                 * (clean_logits.log_softmax(dim=-1) - dirty_lps),

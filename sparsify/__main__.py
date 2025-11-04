@@ -14,6 +14,8 @@ from torch.distributed.tensor import distribute_module, init_device_mesh
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
+    AutoModelForVision2Seq,
+    AutoProcessor,
     AutoTokenizer,
     BitsAndBytesConfig,
     PreTrainedModel,
@@ -86,20 +88,38 @@ def load_artifacts(
     else:
         dtype = "auto"
 
-    # End-to-end training requires a model with a causal LM head
-    model_cls = AutoModel if args.loss_fn == "fvu" else AutoModelForCausalLM
-    model = model_cls.from_pretrained(
-        args.model,
-        device_map={"": f"cuda:{rank}"},
-        quantization_config=(
-            BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
-            if args.load_in_8bit
-            else None
-        ),
-        revision=args.revision,
-        torch_dtype=dtype,
-        token=args.hf_token,
-    )
+    # Detect model type: VLM or LLM
+    is_vlm = any(x in args.model.lower() for x in ['llava', 'qwen-vl', 'idefics', 'paligemma'])
+    
+    if is_vlm:
+        # Load VLM (Vision-Language Model)
+        model = AutoModelForVision2Seq.from_pretrained(
+            args.model,
+            device_map={"": f"cuda:{rank}"},
+            quantization_config=(
+                BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
+                if args.load_in_8bit
+                else None
+            ),
+            revision=args.revision,
+            torch_dtype=dtype,
+            token=args.hf_token,
+        )
+    else:
+        # Load LLM (Language Model)
+        model_cls = AutoModel if args.loss_fn == "fvu" else AutoModelForCausalLM
+        model = model_cls.from_pretrained(
+            args.model,
+            device_map={"": f"cuda:{rank}"},
+            quantization_config=(
+                BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
+                if args.load_in_8bit
+                else None
+            ),
+            revision=args.revision,
+            torch_dtype=dtype,
+            token=args.hf_token,
+        )
     if torch.distributed.is_initialized() and DISTRIBUTE_MODEL:
         # TODO: sdpa doesn't shard correctly
         # model.config._attn_implementation = "eager"
@@ -129,15 +149,22 @@ def load_artifacts(
 
         assert isinstance(dataset, Dataset)
         if "input_ids" not in dataset.column_names:
-            tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
-            dataset = chunk_and_tokenize(
-                dataset,
-                tokenizer,
-                max_seq_len=args.ctx_len,
-                num_proc=args.data_preprocessing_num_proc,
-                text_key=args.text_column,
-                return_overflowed_tokens=args.return_overflowed_tokens,
-            )
+            # For VLMs, use processor; for LLMs, use tokenizer
+            if is_vlm:
+                processor = AutoProcessor.from_pretrained(args.model, token=args.hf_token)
+                # VLM datasets should be preprocessed with pixel_values already
+                # If not, this will fail - VLMs need custom preprocessing
+                print("Warning: VLM dataset should have 'input_ids' and 'pixel_values' pre-processed")
+            else:
+                tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
+                dataset = chunk_and_tokenize(
+                    dataset,
+                    tokenizer,
+                    max_seq_len=args.ctx_len,
+                    num_proc=args.data_preprocessing_num_proc,
+                    text_key=args.text_column,
+                    return_overflowed_tokens=args.return_overflowed_tokens,
+                )
         else:
             print("Dataset already tokenized; skipping tokenization.")
 

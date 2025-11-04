@@ -46,7 +46,7 @@
 | File | Description |
 |------|-------------|
 | `README.md` | Main documentation with quick start |
-| `CLT_ARCHITECTURE_ANALYSIS.md` | Deep dive: PLT vs CLT comparison |
+| `CLT_ARCHITECTURE_ANALYSIS.md` | Deep dive: CLT architecture explanation |
 | `PHASE_GUIDE.md` | Complete pipeline guide |
 | `ACTIVATIONS.md` | Activation format and usage |
 | `LICENSE` | MIT License |
@@ -100,15 +100,15 @@ python scripts/capture_activations.py \
 
 ---
 
-## 📊 Key Improvements Over PLT
+## 📊 CLT Features
 
-| Metric | Your Old PLT | New CLT |
-|--------|--------------|---------|
-| **Decoders per Layer** | 1 | 16 (n_targets) |
-| **Predicts** | Next layer only | 16 future layers |
-| **Generation Quality** | 0% (broken) | ~50% match ✅ |
-| **Can Build Circuits** | ❌ No | ✅ Yes |
-| **Error Compounding** | 0.94³¹ ≈ 14% | Isolated errors |
+| Feature | Description |
+|--------|-------------|
+| **Decoders per Layer** | 16 (n_targets) |
+| **Predicts** | 16 future layers simultaneously |
+| **Generation Quality** | ~50% token-level match ✅ |
+| **Attribution Graphs** | ✅ Yes |
+| **Circuit Discovery** | Cross-layer feature interactions |
 
 ---
 
@@ -153,20 +153,12 @@ vlm-clt-training/
 
 ## 🎯 Next Steps
 
-### Option 1: Continue with Current PLT Activations
-Your existing activations are still valuable for per-layer analysis:
+### Capture Activations for CLT Training
+
+For cross-layer circuit discovery:
 
 ```bash
-# Use them for feature discovery
-cd /scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava
-python analyze_good_features.py
-```
-
-### Option 2: Re-capture with CLT Format
-For true cross-layer circuits:
-
-```bash
-# Re-capture activations with multi-target format
+# Capture activations with multi-target format
 python scripts/capture_activations.py \
   --model llava-hf/llava-1.5-7b-hf \
   --dataset /path/to/amber/queries.json \

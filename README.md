@@ -14,17 +14,15 @@ Cross-Layer Transcoders are sparse autoencoders that:
 - **Read** from the residual stream at layer L
 - **Write** to multiple future MLP layers (L+1, L+2, ..., L+n)
 - Enable discovering **cross-layer circuits** in neural networks
-- Achieve ~50% token-level match when replacing MLPs (vs ~0% for per-layer transcoders)
+- Achieve ~50% token-level match when replacing MLPs during generation
+- Enable building attribution graphs for circuit discovery
 
-### Key Difference: CLT vs PLT
+### Key Features
 
-| Feature | Per-Layer Transcoder (PLT) | Cross-Layer Transcoder (CLT) |
-|---------|---------------------------|------------------------------|
-| Decoders per layer | 1 | Multiple (n_targets) |
-| Predicts | Next layer only | Multiple future layers |
-| Generation quality | ~0% (errors compound) | ~50% match ✅ |
-| Can build attribution graphs | ❌ No | ✅ Yes |
-| Feature semantics | Per-layer only | Cross-layer circuits |
+- **Multi-target decoders**: Each transcoder has multiple decoder heads (n_targets)
+- **Cross-layer predictions**: Features predict multiple future layers simultaneously
+- **Attribution graphs**: Can trace feature→feature interactions across layers
+- **Circuit discovery**: Identify interpretable computational circuits in VLMs
 
 ---
 
@@ -196,12 +194,12 @@ for source_layer in range(current_layer):
 
 ### LLaVA-1.5-7B on AMBER Benchmark
 
-| Metric | Baseline | PLT Replacement | CLT Replacement |
-|--------|----------|-----------------|-----------------|
-| **Generation Quality** | 100% | ~0% (broken) | **~50%** ✅ |
-| **CHAIR Score** | 0.42 | N/A | **0.45** |
-| **Coverage** | 0.68 | N/A | **0.65** |
-| **Can Build Circuits** | N/A | ❌ No | ✅ **Yes** |
+| Metric | Baseline | CLT Replacement |
+|--------|----------|-----------------|
+| **Generation Quality** | 100% | **~50%** ✅ |
+| **CHAIR Score** | 0.42 | **0.45** |
+| **Coverage** | 0.68 | **0.65** |
+| **Attribution Graphs** | N/A | ✅ **Yes** |
 
 ---
 
@@ -262,7 +260,7 @@ feature_activations = replacement_model.feature_cache
 
 ## 📚 Documentation
 
-- **[CLT Architecture Analysis](docs/CLT_ARCHITECTURE_ANALYSIS.md)** - Detailed comparison of PLT vs CLT
+- **[CLT Architecture Analysis](docs/CLT_ARCHITECTURE_ANALYSIS.md)** - Detailed CLT architecture explanation
 - **[Phase Guide](docs/PHASE_GUIDE.md)** - Complete pipeline from training to circuit discovery
 - **[Anthropic Paper](https://transformer-circuits.pub/2025/attribution-graphs/methods.html)** - Original methodology
 - **[EleutherAI CLT Training](https://github.com/EleutherAI/clt-training)** - Text-only CLT implementation

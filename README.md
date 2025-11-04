@@ -275,11 +275,11 @@ If you use this code in your research, please cite:
 
 ```bibtex
 @misc{vlm-clt-training,
-  author = {Your Name},
+  author = {KOKOSde},
   title = {Cross-Layer Transcoder Training for Vision-Language Models},
   year = {2025},
   publisher = {GitHub},
-  url = {https://github.com/YOUR_USERNAME/vlm-clt-training}
+  url = {https://github.com/KOKOSde/vlm-clt-training}
 }
 
 @article{anthropic2025attribution,
@@ -320,7 +320,8 @@ Based on [EleutherAI/clt-training](https://github.com/EleutherAI/clt-training) (
 
 ## 📮 Contact
 
-For questions or issues, please open a GitHub issue or contact [your email].
+For questions or issues, please open a GitHub issue at:
+https://github.com/KOKOSde/vlm-clt-training/issues
 
 Happy circuit discovering! 🔬✨
 

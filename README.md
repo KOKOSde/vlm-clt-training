@@ -81,49 +81,29 @@ activations/
 
 ### Train CLTs
 
+**Single layer** (recommended to start):
 ```bash
-bash scripts/train_llava_clt.sh \
-  llava-hf/llava-1.5-7b-hf \
-  my-first-clt-run \
-  ./activations
+bash scripts/train_single_layer.sh 0  # Train layer 0
 ```
 
-Or with Python:
+**Or directly with Python**:
 
-```python
-from sparsify import SparseCoder, SparseCoderConfig
-from sparsify.vlm_data import VLMActivationDataset
-
-# Configure CLT
-config = SparseCoderConfig(
-    transcode=True,           # Enable transcoder mode
-    n_targets=16,             # Predict 16 layers ahead
-    k=32,                     # 32 active features
-    expansion_factor=2,       # 8192 features for 4096 hidden dim
-    skip_connection=True,
-    train_post_encoder=True,
-    post_encoder_scale=True,
-)
-
-# Load activation data
-dataset = VLMActivationDataset(
-    activations_dir="./activations",
-    layer=0,
-    n_targets=16,
-)
-
-# Create and train transcoder
-transcoder = SparseCoder(
-    d_in=4096,  # LLaVA hidden dim
-    cfg=config,
-)
-
-# Training loop (see examples/ for full code)
-for x, targets in dataset:
-    loss = transcoder(x, targets)
-    loss.backward()
-    optimizer.step()
+```bash
+python scripts/train_llava_clt.py \
+  --config config.yaml \
+  --layer 0 \
+  --clt-mode \
+  --steps 5000 \
+  --lr 3e-4 \
+  --feature-dim 8192 \
+  --batch-samples 16 \
+  --compile
 ```
+
+**Outputs**:
+- `transcoder_L0.pt` - Trained CLT weights
+- `mapping_L0.pt` - MLP→CLT correlation mapping for deployment
+- `metrics_L0.json` - Training metrics and dead feature statistics
 
 ---
 

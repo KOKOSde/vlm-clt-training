@@ -33,10 +33,28 @@ Cross-Layer Transcoders are sparse autoencoders that:
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/vlm-clt-training
+git clone https://github.com/KOKOSde/vlm-clt-training
 cd vlm-clt-training
 pip install -e .
 ```
+
+### Pre-captured Activations
+
+We provide pre-captured activations from LLaVA-1.5-7B on AMBER dataset (1004 samples, 496MB):
+
+**Option 1: Download from Hugging Face** (Coming soon)
+```bash
+python scripts/download_activations.py --dataset amber
+```
+
+**Option 2: Use existing activations**
+If you already have activations at `/scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber/`:
+```bash
+ln -s /scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber ./activations
+```
+
+**Option 3: Capture your own**
+See "Capture Activations" section below.
 
 ### Capture Activations
 

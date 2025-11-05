@@ -37,3 +37,4 @@ echo "  nvidia-smi"
 echo "  ps aux | grep $TRAIN_PID"
 
 
+

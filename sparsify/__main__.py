@@ -176,14 +176,13 @@ def load_artifacts(
         def process_fn(batch):
             return process_vlm_batch(batch, processor, max_length=args.ctx_len)
         
-        # Use fewer workers for VLM processing to avoid crashes (image loading is memory-intensive)
-        vlm_num_proc = min(4, args.data_preprocessing_num_proc) if args.data_preprocessing_num_proc > 1 else 1
-        
+        # Disable multiprocessing for VLM data - processor isn't pickleable
+        print("Processing images sequentially (VLM processor requires single process)...")
         dataset = dataset.map(
             process_fn,
             batched=True,
-            batch_size=16,  # Smaller batch size for image processing
-            num_proc=vlm_num_proc,
+            batch_size=8,  # Smaller batch size for image processing
+            num_proc=1,  # Single process to avoid crashes
             remove_columns=dataset.column_names,
             desc="Processing VLM data"
         )

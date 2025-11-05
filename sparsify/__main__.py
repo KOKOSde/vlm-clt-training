@@ -161,7 +161,7 @@ def load_artifacts(
         
         print(f"Image directory: {image_dir}")
         
-        # Load JSONL dataset
+        # Load JSONL dataset (keep as text + image paths, don't process yet)
         dataset = load_jsonl_with_images(
             args.dataset,
             image_dir=image_dir,
@@ -169,30 +169,64 @@ def load_artifacts(
             max_samples=args.max_examples if limit_before_processing else None
         )
         
-        # Process through VLM processor
+        print(f"Loaded {len(dataset)} samples (text + image paths)")
+        print(f"Shuffling dataset with seed {args.shuffle_seed}")
+        dataset = dataset.shuffle(args.shuffle_seed)
+        
+        if not limit_before_processing and args.max_examples:
+            dataset = dataset.select(range(min(args.max_examples, len(dataset))))
+        
+        # Process through VLM processor in smaller chunks to avoid OOM
+        import tempfile
         processor = create_vlm_processor(args.model, args.hf_token)
-        print(f"Processing {len(dataset)} samples through VLM processor...")
+        print(f"Processing {len(dataset)} samples through VLM processor (in chunks to avoid OOM)...")
         
         def process_fn(batch):
             return process_vlm_batch(batch, processor, max_length=args.ctx_len)
         
-        # Disable multiprocessing for VLM data - processor isn't pickleable
-        print("Processing images sequentially (VLM processor requires single process)...")
-        dataset = dataset.map(
-            process_fn,
-            batched=True,
-            batch_size=8,  # Smaller batch size for image processing
-            num_proc=1,  # Single process to avoid crashes
-            remove_columns=dataset.column_names,
-            desc="Processing VLM data"
-        )
+        # Process in smaller chunks and save to disk to avoid OOM
+        chunk_size = 5000  # Smaller chunks
+        temp_dir = tempfile.mkdtemp(prefix="vlm_processed_")
+        print(f"Saving processed chunks to: {temp_dir}")
         
-        print(f"Shuffling dataset with seed {args.shuffle_seed}")
-        dataset = dataset.shuffle(args.shuffle_seed)
+        for i in range(0, len(dataset), chunk_size):
+            chunk_start = i
+            chunk_end = min(i + chunk_size, len(dataset))
+            chunk = dataset.select(range(chunk_start, chunk_end))
+            chunk_num = i // chunk_size + 1
+            total_chunks = (len(dataset) + chunk_size - 1) // chunk_size
+            
+            print(f"Processing chunk {chunk_num}/{total_chunks} ({chunk_end - chunk_start} samples)...")
+            
+            processed_chunk = chunk.map(
+                process_fn,
+                batched=True,
+                batch_size=32,
+                num_proc=1,
+                remove_columns=chunk.column_names,
+                desc=f"Chunk {chunk_num}/{total_chunks}"
+            )
+            
+            # Save to disk and free memory
+            chunk_path = os.path.join(temp_dir, f"chunk_{chunk_num}")
+            processed_chunk.save_to_disk(chunk_path)
+            del processed_chunk
+            del chunk
+            import gc
+            gc.collect()
+        
+        # Load all chunks from disk
+        print("Loading processed chunks from disk...")
+        from datasets import concatenate_datasets, load_from_disk
+        processed_chunks = []
+        for i in range(0, len(dataset), chunk_size):
+            chunk_num = i // chunk_size + 1
+            chunk_path = os.path.join(temp_dir, f"chunk_{chunk_num}")
+            processed_chunks.append(load_from_disk(chunk_path))
+        
+        dataset = concatenate_datasets(processed_chunks)
         dataset = dataset.with_format("torch")
-        
-        if not limit_before_processing and args.max_examples:
-            dataset = dataset.select(range(min(args.max_examples, len(dataset))))
+        print(f"Processed dataset ready: {len(dataset)} samples")
     else:
         # For Huggingface datasets
         try:

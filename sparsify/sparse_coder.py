@@ -198,9 +198,7 @@ class MidDecoder:
                 sae_out,
                 self.latent_acts,
                 self.latent_indices,
-                sae_out.new_tensor(0.0),
-                sae_out.new_tensor(0.0),
-                sae_out.new_tensor(0.0),
+                sae_out.new_tensor(0.0),  # fvu = 0 (no loss computation)
                 is_last,
             )
         else:

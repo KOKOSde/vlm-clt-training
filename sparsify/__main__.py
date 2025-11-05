@@ -148,22 +148,17 @@ def load_artifacts(
 
         assert isinstance(dataset, Dataset)
         if "input_ids" not in dataset.column_names:
-            # For VLMs, use processor; for LLMs, use tokenizer
-            if is_vlm:
-                processor = AutoProcessor.from_pretrained(args.model, token=args.hf_token)
-                # VLM datasets should be preprocessed with pixel_values already
-                # If not, this will fail - VLMs need custom preprocessing
-                print("Warning: VLM dataset should have 'input_ids' and 'pixel_values' pre-processed")
-            else:
-                tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
-                dataset = chunk_and_tokenize(
-                    dataset,
-                    tokenizer,
-                    max_seq_len=args.ctx_len,
-                    num_proc=args.data_preprocessing_num_proc,
-                    text_key=args.text_column,
-                    return_overflowed_tokens=args.return_overflowed_tokens,
-                )
+            # Tokenize text data (works for both LLMs and VLMs on text-only datasets)
+            tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
+            print(f"Tokenizing dataset with text column: {args.text_column}")
+            dataset = chunk_and_tokenize(
+                dataset,
+                tokenizer,
+                max_seq_len=args.ctx_len,
+                num_proc=args.data_preprocessing_num_proc,
+                text_key=args.text_column,
+                return_overflowed_tokens=args.return_overflowed_tokens,
+            )
         else:
             print("Dataset already tokenized; skipping tokenization.")
 

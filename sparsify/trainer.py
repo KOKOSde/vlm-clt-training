@@ -526,6 +526,13 @@ class Trainer:
             # Flatten the batch and sequence dimensions
             outputs = outputs.flatten(0, 1)
             inputs = inputs.flatten(0, 1) if self.cfg.sae.transcode else outputs
+            
+            # Handle bos_mask properly
+            if isinstance(bos_mask, int):
+                # bos_mask is already a scalar (0 or 1), create a proper tensor mask
+                bos_mask_mesh = torch.zeros_like(outputs[:, 0], dtype=torch.bool)
+            else:
+                bos_mask_mesh = bos_mask.flatten(0, 1)
 
             if self.mesh is not None:
                 if not DISTRIBUTE_MODEL:
@@ -533,16 +540,17 @@ class Trainer:
                     outputs = DTensor.from_local(
                         outputs, self.mesh, [Shard(0), Shard(0)]
                     )
-                    bos_mask_mesh = DTensor.from_local(
-                        bos_mask.flatten(0, 1), self.mesh, [Shard(0), Shard(0)]
-                    )
+                    # bos_mask_mesh already created above, just convert to DTensor if needed
+                    if not isinstance(bos_mask_mesh, DTensor):
+                        bos_mask_mesh = DTensor.from_local(
+                            bos_mask_mesh, self.mesh, [Shard(0), Shard(0)]
+                        )
                 inputs = inputs.redistribute(self.mesh, [Shard(0), Replicate()])
                 outputs = outputs.redistribute(self.mesh, [Shard(0), Shard(1)])
                 bos_mask_mesh = bos_mask_mesh.redistribute(
                     self.mesh, [Shard(0), Replicate()]
                 )
-            else:
-                bos_mask_mesh = bos_mask.flatten(0, 1)
+            # else: bos_mask_mesh already created above
 
             # On the first iteration, initialize the encoder and decoder biases
             raw = self.saes[name]

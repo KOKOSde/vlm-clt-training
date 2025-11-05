@@ -36,3 +36,4 @@ echo "  tail -f training_final.log"
 echo "  nvidia-smi"
 echo "  ps aux | grep $TRAIN_PID"
 
+

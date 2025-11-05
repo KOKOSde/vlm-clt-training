@@ -129,6 +129,59 @@ def load_artifacts(
     # For memmap-style datasets
     if args.dataset.endswith(".bin"):
         dataset = MemmapDataset(args.dataset, args.ctx_len, args.max_examples)
+    # For JSONL with images (VLM datasets)
+    elif args.dataset.endswith(".jsonl") and is_vlm:
+        print(f"Loading VLM dataset from JSONL: {args.dataset}")
+        from .vlm_data import load_jsonl_with_images, process_vlm_batch, create_vlm_processor
+        
+        # Determine image directory
+        dataset_dir = os.path.dirname(args.dataset)
+        # Common image directories for COCO/LLaVA
+        possible_image_dirs = [
+            os.path.join(dataset_dir, "images"),
+            os.path.join(dataset_dir, "../images"),
+            os.path.join(dataset_dir, "coco"),
+            os.path.join(dataset_dir, "../coco"),
+            dataset_dir,
+        ]
+        image_dir = None
+        for candidate in possible_image_dirs:
+            if os.path.isdir(candidate):
+                image_dir = candidate
+                break
+        
+        print(f"Image directory: {image_dir}")
+        
+        # Load JSONL dataset
+        dataset = load_jsonl_with_images(
+            args.dataset,
+            image_dir=image_dir,
+            text_column=args.text_column,
+            max_samples=args.max_examples if limit_before_processing else None
+        )
+        
+        # Process through VLM processor
+        processor = create_vlm_processor(args.model, args.hf_token)
+        print(f"Processing {len(dataset)} samples through VLM processor...")
+        
+        def process_fn(batch):
+            return process_vlm_batch(batch, processor, max_length=args.ctx_len)
+        
+        dataset = dataset.map(
+            process_fn,
+            batched=True,
+            batch_size=32,
+            num_proc=args.data_preprocessing_num_proc,
+            remove_columns=dataset.column_names,
+            desc="Processing VLM data"
+        )
+        
+        print(f"Shuffling dataset with seed {args.shuffle_seed}")
+        dataset = dataset.shuffle(args.shuffle_seed)
+        dataset = dataset.with_format("torch")
+        
+        if not limit_before_processing and args.max_examples:
+            dataset = dataset.select(range(min(args.max_examples, len(dataset))))
     else:
         # For Huggingface datasets
         try:

@@ -1,15 +1,16 @@
 #!/bin/bash
-# Final training script with working dataset
+# Working CLT training script - tokenizes text automatically
 
 cd /scratch/fkalghan/vlm-clt-training
 source /home/fkalghan/.venv/bin/activate
 
-echo "======================================"
+echo "========================================="
 echo "CLT Training for LLaVA - All 32 Layers"
-echo "======================================"
-
-# Use a modern text dataset for testing first
-# Once this works, we can add VLM-specific data preprocessing
+echo "========================================="
+echo ""
+echo "Using TinyStories dataset (will auto-tokenize)"
+echo "Training CLT with 16 targets per layer"
+echo ""
 
 nohup python -m sparsify \
   llava-hf/llava-1.5-7b-hf \
@@ -27,18 +28,18 @@ nohup python -m sparsify \
   -k 32 \
   --max_examples 10000 \
   --split train \
-  > training_final.log 2>&1 &
+  --text_column text \
+  --save_every 1000 \
+  > training.log 2>&1 &
 
 TRAIN_PID=$!
-echo ""
 echo "Training started with PID: $TRAIN_PID"
 echo ""
-echo "Monitor with:"
-echo "  tail -f training_final.log"
-echo "  ps aux | grep $TRAIN_PID"
+echo "Monitor:"
+echo "  tail -f training.log"
 echo "  nvidia-smi"
 echo ""
-echo "Note: Using TinyStories for testing framework."
-echo "Once confirmed working, we'll add proper VLM image+text data."
+echo "Checkpoints will be saved to:"
+echo "  checkpoints/llava-clt-all-layers/"
 
 

@@ -28,3 +28,4 @@ echo "Training started with PID: $TRAIN_PID"
 echo "Check logs: tail -f /scratch/fkalghan/vlm-clt-training/training.log"
 echo "Check status: ps aux | grep $TRAIN_PID"
 
+

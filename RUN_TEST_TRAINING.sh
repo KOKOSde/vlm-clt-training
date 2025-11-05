@@ -31,3 +31,4 @@ echo "Check logs: tail -f /scratch/fkalghan/vlm-clt-training/training_test.log"
 echo ""
 echo "Once this works, we'll preprocess the VLM dataset properly"
 
+

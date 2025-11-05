@@ -84,14 +84,22 @@ def process_vlm_batch(batch: Dict[str, Any], processor, max_length: int = 512) -
     Returns:
         Processed batch with 'input_ids', 'attention_mask', 'pixel_values'
     """
+    # Import here to avoid issues with multiprocessing
+    import torch
+    from PIL import Image
+    
     images = []
     texts = batch['text']
     
-    # Load images
+    # Load images with better error handling
     for img_path in batch['image_path']:
         try:
-            img = Image.open(img_path).convert('RGB')
-            images.append(img)
+            if img_path and os.path.exists(img_path):
+                img = Image.open(img_path).convert('RGB')
+                images.append(img)
+            else:
+                # Missing image: create a blank image
+                images.append(Image.new('RGB', (336, 336), color='black'))
         except Exception:
             # Fallback: create a blank image
             images.append(Image.new('RGB', (336, 336), color='black'))

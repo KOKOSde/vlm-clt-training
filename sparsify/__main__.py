@@ -136,19 +136,28 @@ def load_artifacts(
         
         # Determine image directory
         dataset_dir = os.path.dirname(args.dataset)
+        data_root = os.path.dirname(dataset_dir)  # Go up one more level
         # Common image directories for COCO/LLaVA
         possible_image_dirs = [
             os.path.join(dataset_dir, "images"),
             os.path.join(dataset_dir, "../images"),
             os.path.join(dataset_dir, "coco"),
             os.path.join(dataset_dir, "../coco"),
+            os.path.join(data_root, "coco", "train2017"),
+            os.path.join(data_root, "coco", "val2017"),
+            os.path.join(data_root, "coco"),
             dataset_dir,
         ]
         image_dir = None
         for candidate in possible_image_dirs:
             if os.path.isdir(candidate):
-                image_dir = candidate
-                break
+                # Verify it actually has images
+                try:
+                    if any(f.endswith(('.jpg', '.png', '.jpeg')) for f in os.listdir(candidate)[:100]):
+                        image_dir = candidate
+                        break
+                except Exception:
+                    continue
         
         print(f"Image directory: {image_dir}")
         

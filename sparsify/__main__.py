@@ -135,8 +135,7 @@ def load_artifacts(
             dataset = load_dataset(
                 args.dataset,
                 split=args.split,
-                # TODO: Maybe set this to False by default? But RPJ requires it.
-                trust_remote_code=True,
+                # Removed trust_remote_code for compatibility with datasets>=4.0
             )
         except ValueError as e:
             # Automatically use load_from_disk if appropriate

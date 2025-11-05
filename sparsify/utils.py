@@ -96,10 +96,20 @@ def assert_type(typ: Type[T], obj: Any) -> T:
 
 def get_layer_list(model: PreTrainedModel) -> tuple[str, nn.ModuleList]:
     """Get the list of layers to train SAEs on."""
-    N = assert_type(int, model.config.num_hidden_layers)
+    # Handle VLMs (LLaVA, etc.) that have nested language_model config
+    if hasattr(model.config, 'text_config'):
+        # LLaVA-style: config.text_config.num_hidden_layers
+        N = assert_type(int, model.config.text_config.num_hidden_layers)
+    elif hasattr(model, 'language_model') and hasattr(model.language_model, 'config'):
+        # Alternative VLM structure
+        N = assert_type(int, model.language_model.config.num_hidden_layers)
+    else:
+        # Standard LLM
+        N = assert_type(int, model.config.num_hidden_layers)
+    
     candidates = [
         (name, mod)
-        for (name, mod) in model.base_model.named_modules()
+        for (name, mod) in model.named_modules()
         if isinstance(mod, nn.ModuleList) and len(mod) == N
     ]
     assert len(candidates) == 1, "Could not find the list of layers."

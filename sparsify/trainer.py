@@ -395,21 +395,9 @@ class Trainer:
 
         rank_zero = not dist.is_initialized() or dist.get_rank() == 0
 
+        # W&B removed - not needed
         wandb = None
-        if self.cfg.log_to_wandb and rank_zero:
-            try:
-                import wandb
-
-                wandb.init(
-                    name=self.cfg.run_name,
-                    project="sparsify",
-                    config=asdict(self.cfg),
-                    save_code=True,
-                )
-            except (AttributeError, ImportError):
-                print("Weights & Biases not available, skipping logging.")
-                print("Run `pip install -U wandb` if you want to use it.")
-                self.cfg.log_to_wandb = False
+        self.cfg.log_to_wandb = False
 
         num_sae_params = sum(
             p.numel() for s in self.saes.values() for p in s.parameters()

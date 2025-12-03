@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
 """
-Train a cross-layer sparse transcoder for one LLaVA layer L:
-  Encoder: Linear(hidden_dim -> feature_dim) + ReLU (optionally top-k)
-  Decoder: Linear(feature_dim -> hidden_dim) to predict next-layer hidden (Y)
+Train a cross-layer sparse transcoder (CLT) for one LLaVA layer L.
 
-Data: loads batch_*.pt files from activations_dir/L{L}/
+Architecture (CLT-style, similar to Qwen CLT):
+- Encoder:  LayerNorm(hidden_dim) → Linear(hidden_dim → feature_dim) → ReLU / TopK
+- Decoder:  Linear(feature_dim → hidden_dim * n_targets)
+            reshaped to [B, T, n_targets, hidden_dim] predicting:
+                [MLP_L+1, MLP_L+2, ..., MLP_L+n_targets]
 
-Adapted from train_transcoder_layer_v2.py for LLaVA batch file format.
+Data layout (see ACTIVATIONS.md):
+- activations_dir/L{L}/batch_*_x.pt:  residual stream at layer L
+- activations_dir/L{L}/batch_*_y.pt:  dict with:
+      {
+        'y': tensor([...]),        # primary target (L+1)
+        'targets': [               # all CLT targets
+            tensor([...]),         # MLP at L+1
+            tensor([...]),         # MLP at L+2
+            ...
+        ],
+        'n_targets': int,
+      }
 """
 
 import argparse
@@ -25,30 +38,50 @@ import queue
 
 
 class Transcoder(nn.Module):
-    def __init__(self, hidden_dim: int, feature_dim: int, cross_layer_depth: int = 1, clt_mode: bool = False, use_topk: bool = False, topk_pct: float = 0.12):
+    """
+    Cross-Layer Transcoder for one LLaVA layer L (multi-target CLT).
+
+    - Reads residual stream at layer L
+    - Writes to MLP outputs of multiple future layers (L+1..L+n_targets)
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        feature_dim: int,
+        n_targets: int = 1,
+        use_topk: bool = False,
+        topk_pct: float = 0.12,
+    ):
         super().__init__()
-        self.cross_layer_depth = cross_layer_depth
-        self.clt_mode = clt_mode
+        self.hidden_dim = hidden_dim
+        self.feature_dim = feature_dim
+        self.n_targets = max(1, int(n_targets))
         self.use_topk = use_topk
         self.topk_pct = topk_pct
+
+        # Encoder: residual stream -> sparse features
         self.enc = nn.Sequential(
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, feature_dim),
         )
-        
-        # Decoder output size
-        if clt_mode:
-            # CLT: always predict single MLP output (hidden_dim)
-            # cross_layer_depth is ignored in CLT mode
-            self.dec = nn.Linear(feature_dim, hidden_dim)
-        else:
-            # PLT: can predict multiple future layers
-            self.dec = nn.Linear(feature_dim, hidden_dim * cross_layer_depth)
 
-    def forward(self, x):
+        # Decoder: features -> residual stream for multiple future layers
+        # Output shape before reshape: [B, T, hidden_dim * n_targets]
+        self.dec = nn.Linear(feature_dim, hidden_dim * self.n_targets)
+
+    def forward(self, x: torch.Tensor):
+        """
+        Args:
+            x: [B, T, H] residual stream at base layer L
+
+        Returns:
+            y_hat: [B, T, n_targets, H] predicted MLP outputs for L+1..L+n_targets
+            z:     [B, T, feature_dim] sparse feature activations
+        """
         # x: [B, T, H]
         z_pre = self.enc(x)  # [B, T, feature_dim] - pre-activation
-        
+
         if self.use_topk:
             # TopK activation: keep only top K% of features
             k = max(1, int(z_pre.shape[-1] * self.topk_pct))
@@ -60,20 +93,11 @@ class Transcoder(nn.Module):
         else:
             # Standard ReLU activation
             z = torch.relu(z_pre)
-        
-        y_hat_flat = self.dec(z)  # [B, T, H] (CLT) or [B, T, H * depth] (PLT)
-        
-        if self.clt_mode:
-            # CLT mode: output is already [B, T, H] (MLP output)
-            y_hat = y_hat_flat
-        elif self.cross_layer_depth > 1:
-            # PLT multi-layer mode: reshape to [B, T, cross_layer_depth, H]
-            B, T = y_hat_flat.shape[:2]
-            H = y_hat_flat.shape[-1] // self.cross_layer_depth
-            y_hat = y_hat_flat.view(B, T, self.cross_layer_depth, H)
-        else:
-            # PLT single-layer mode: [B, T, H]
-            y_hat = y_hat_flat
+
+        # Decode to multiple future layers
+        y_hat_flat = self.dec(z)  # [B, T, H * n_targets]
+        B, T, _ = y_hat_flat.shape
+        y_hat = y_hat_flat.view(B, T, self.n_targets, self.hidden_dim)
         return y_hat, z
 
 
@@ -117,8 +141,17 @@ def infer_hidden_dim(sample_path: str) -> int:
     return int(x.shape[-1])
 
 
-def load_and_unpack_batch(x_path: str, y_path: str, cache: dict | None = None) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """Load a batch file pair and unpack into individual samples."""
+def load_and_unpack_batch(
+    x_path: str,
+    y_path: str,
+    n_targets: int,
+    cache: dict | None = None,
+) -> List[Tuple[torch.Tensor, List[torch.Tensor]]]:
+    """
+    Load a batch file pair and unpack into individual samples.
+
+    Returns a list of (x_sample, [y_sample_L+1, ..., y_sample_L+n_targets]) tuples.
+    """
     # Check cache first
     cache_key = (x_path, y_path)
     if cache is not None and cache_key in cache:
@@ -131,17 +164,35 @@ def load_and_unpack_batch(x_path: str, y_path: str, cache: dict | None = None) -
         return []
     
     x_batch = x_obj.get('x') if 'x' in x_obj else x_obj.get('data')
-    y_batch = y_obj.get('y') if 'y' in y_obj else y_obj.get('data')
-    
     x_batch = ensure_3d(x_batch)  # [N, T, H]
-    y_batch = ensure_3d(y_batch)  # [N, T, H]
-    
+
+    # Multi-target CLT format: 'targets' list + 'n_targets'
+    targets_list = None
+    if isinstance(y_obj, dict) and 'targets' in y_obj:
+        targets_list = y_obj['targets']
+    else:
+        # Fallback: single-target format
+        y_single = y_obj.get('y') if 'y' in y_obj else y_obj.get('data')
+        y_single = ensure_3d(y_single)
+        targets_list = [y_single]
+
+    # Ensure 3D for each target and respect requested n_targets
+    targets_list_3d: List[torch.Tensor] = [ensure_3d(t) for t in targets_list]
+    if n_targets <= len(targets_list_3d):
+        targets_list_3d = targets_list_3d[:n_targets]
+    else:
+        # If fewer targets than requested, pad with zeros like capture_activations.py
+        base = targets_list_3d[0]
+        for _ in range(n_targets - len(targets_list_3d)):
+            targets_list_3d.append(torch.zeros_like(base))
+
     # Split into individual samples
-    samples = []
-    for i in range(x_batch.shape[0]):
+    samples: List[Tuple[torch.Tensor, List[torch.Tensor]]] = []
+    N = x_batch.shape[0]
+    for i in range(N):
         x_sample = x_batch[i:i+1]  # [1, T, H]
-        y_sample = y_batch[i:i+1]  # [1, T, H]
-        samples.append((x_sample, y_sample))
+        y_samples = [t[i:i+1] for t in targets_list_3d]  # list of [1, T, H]
+        samples.append((x_sample, y_samples))
     
     # Cache if enabled
     if cache is not None:
@@ -150,13 +201,32 @@ def load_and_unpack_batch(x_path: str, y_path: str, cache: dict | None = None) -
     return samples
 
 
-def collate_samples(samples: List[Tuple[torch.Tensor, torch.Tensor]], device: torch.device, target_len: int = 512, max_tokens: int = 4096):
-    """Collate samples into a batch, cropping to common length."""
+def collate_samples(
+    samples: List[Tuple[torch.Tensor, List[torch.Tensor]]],
+    device: torch.device,
+    target_len: int = 512,
+    max_tokens: int = 4096,
+    n_targets: int = 1,
+):
+    """
+    Collate CLT samples into a batch, cropping to common length.
+
+    Args:
+        samples: list of (x, [y_1, ..., y_n_targets]) where each tensor is [1, T, H]
+        device: torch device
+        target_len: max sequence length to keep
+        max_tokens: max tokens across batch (for safety)
+        n_targets: number of CLT targets to collate
+
+    Returns:
+        X: [B, T_common, H]
+        Ys: list of length n_targets, each [B, T_common, H]
+    """
     xs = []
-    ys = []
+    ys_per_target: List[list] = [[] for _ in range(n_targets)]
     lengths = []
     
-    for x, y in samples:
+    for x, ys in samples:
         T = x.shape[1]
         lengths.append(T)
     
@@ -166,32 +236,39 @@ def collate_samples(samples: List[Tuple[torch.Tensor, torch.Tensor]], device: to
     # Determine common take length
     common = min(min(lengths), target_len, max_tokens)
     
-    for x, y in samples:
+    for x, ys in samples:
         T = x.shape[1]
         if T == common:
             start = 0
         else:
             start = 0 if T < common else random.randint(0, T - common)
         xs.append(x[:, start:start+common, :])
-        ys.append(y[:, start:start+common, :])
+        # Crop all targets with the same span
+        for t_idx in range(n_targets):
+            if t_idx < len(ys):
+                y_t = ys[t_idx]
+            else:
+                # Safety: pad missing targets with zeros like capture_activations.py
+                y_t = torch.zeros_like(ys[0])
+            ys_per_target[t_idx].append(y_t[:, start:start+common, :])
     
     # Concatenate on CPU first, pin for fast H2D, then async transfer
     X_cpu = torch.cat(xs, dim=0).contiguous()
-    Y_cpu = torch.cat(ys, dim=0).contiguous()
+    Y_cpu_list = [torch.cat(buf, dim=0).contiguous() for buf in ys_per_target]
     
     if device.type == 'cuda':
         try:
             X_cpu = X_cpu.pin_memory()
-            Y_cpu = Y_cpu.pin_memory()
+            Y_cpu_list = [Y_cpu.pin_memory() for Y_cpu in Y_cpu_list]
         except Exception:
             pass
         X = X_cpu.to(device, non_blocking=True)
-        Y = Y_cpu.to(device, non_blocking=True)
+        Ys = [Y_cpu.to(device, non_blocking=True) for Y_cpu in Y_cpu_list]
     else:
         X = X_cpu
-        Y = Y_cpu
+        Ys = Y_cpu_list
     
-    return X, Y
+    return X, Ys
 
 
 def main():
@@ -201,8 +278,8 @@ def main():
     parser.add_argument('--steps', type=int, default=2000)
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--feature-dim', type=int, default=None)
-    parser.add_argument('--cross-layer-depth', type=int, default=1, help='PLT: predict N layers ahead (only used when clt-mode=False)')
-    parser.add_argument('--clt-mode', action='store_true', help='CLT mode: train on MLP outputs (Anthropic style)')
+    parser.add_argument('--cross-layer-depth', type=int, default=1, help='(LEGACY, unused) PLT: predict N layers ahead')
+    parser.add_argument('--clt-mode', action='store_true', help='(LEGACY) kept for CLI compatibility; CLT mode is always used here')
     parser.add_argument('--use-topk', action='store_true', help='Use TopK activation to force exact sparsity')
     parser.add_argument('--topk-pct', type=float, default=0.12, help='TopK percentage (0.12 = 12%% sparsity)')
     parser.add_argument('--batch-samples', type=int, default=8, help='Number of samples per training batch')
@@ -247,8 +324,15 @@ def main():
 
     hidden_dim = infer_hidden_dim(batch_pairs[0][0])
     feature_dim = args.feature_dim or int(cfg.get('feature_dim', 8192))
+
+    # Infer number of CLT targets from first y batch (if present)
+    first_y_obj = torch.load(batch_pairs[0][1], map_location='cpu')
+    if isinstance(first_y_obj, dict) and 'n_targets' in first_y_obj and 'targets' in first_y_obj:
+        n_targets = int(first_y_obj.get('n_targets', len(first_y_obj['targets'])))
+    else:
+        n_targets = 1
     
-    print(f"Hidden dim: {hidden_dim}, Feature dim: {feature_dim}")
+    print(f"Hidden dim: {hidden_dim}, Feature dim: {feature_dim}, n_targets: {n_targets}")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -260,12 +344,11 @@ def main():
         pass
 
     model = Transcoder(
-        hidden_dim, 
-        feature_dim, 
-        cross_layer_depth=args.cross_layer_depth, 
-        clt_mode=args.clt_mode, 
-        use_topk=args.use_topk, 
-        topk_pct=args.topk_pct
+        hidden_dim,
+        feature_dim,
+        n_targets=n_targets,
+        use_topk=args.use_topk,
+        topk_pct=args.topk_pct,
     ).to(device)
     
     if args.compile:
@@ -336,7 +419,7 @@ def main():
     except Exception:
         prefetch_queue_size = 4
 
-    sample_pool_q: "queue.Queue[List[Tuple[torch.Tensor, torch.Tensor]] | None]" = queue.Queue(maxsize=prefetch_queue_size)
+    sample_pool_q: "queue.Queue[List[Tuple[torch.Tensor, List[torch.Tensor]]] | None]" = queue.Queue(maxsize=prefetch_queue_size)
     stop_prefetch = threading.Event()
 
     def prefetch_loop():
@@ -344,7 +427,7 @@ def main():
             while not stop_prefetch.is_set():
                 # Pick a random batch file pair
                 x_path, y_path = random.choice(train_batch_pairs)
-                samples = load_and_unpack_batch(x_path, y_path, cache=batch_cache)
+                samples = load_and_unpack_batch(x_path, y_path, n_targets, cache=batch_cache)
                 if samples:
                     sample_pool_q.put(samples)
         except Exception:
@@ -363,7 +446,7 @@ def main():
         except Exception:
             # Fallback: load synchronously
             x_path, y_path = random.choice(train_batch_pairs)
-            samples = load_and_unpack_batch(x_path, y_path, cache=batch_cache)
+            samples = load_and_unpack_batch(x_path, y_path, n_targets, cache=batch_cache)
             all_train_samples.extend(samples)
             break
     
@@ -381,26 +464,45 @@ def main():
         # If pool is low, load synchronously
         if len(all_train_samples) < args.batch_samples:
             x_path, y_path = random.choice(train_batch_pairs)
-            samples = load_and_unpack_batch(x_path, y_path, cache=batch_cache)
+            samples = load_and_unpack_batch(x_path, y_path, n_targets, cache=batch_cache)
             all_train_samples.extend(samples)
         
         # Sample a batch
         if cached_batch_data is None or step > cached_until:
             batch_samples = random.sample(all_train_samples, k=min(args.batch_samples, len(all_train_samples)))
-            X, Y = collate_samples(batch_samples, device=device, target_len=target_len)
+            X, Y_targets = collate_samples(
+                batch_samples,
+                device=device,
+                target_len=target_len,
+                max_tokens=4096,
+                n_targets=n_targets,
+            )
             if device.type == 'cuda' and args.dtype in ('fp16', 'bf16'):
                 X = X.to(amp_dtype)
-                Y = Y.to(amp_dtype)
-            cached_batch_data = (X, Y)
+                Y_targets = [Y_t.to(amp_dtype) for Y_t in Y_targets]
+            cached_batch_data = (X, Y_targets)
             cached_until = step + max(1, args.reuse_steps) - 1
         else:
-            X, Y = cached_batch_data
+            X, Y_targets = cached_batch_data
 
         opt.zero_grad(set_to_none=True)
         if use_amp:
             with torch.amp.autocast('cuda', dtype=amp_dtype):
-                Y_hat, Z = model(X)
-                loss_rec = mse(Y_hat, Y)
+                Y_hat, Z = model(X)  # Y_hat: [B, T, n_targets, H]
+
+                # Reconstruction loss across all targets (like Qwen CLT)
+                loss_rec = 0.0
+                used_targets = 0
+                for t_idx, Y_t in enumerate(Y_targets):
+                    if t_idx < Y_hat.shape[2]:
+                        y_pred = Y_hat[:, :, t_idx, :]
+                        loss_rec = loss_rec + mse(y_pred, Y_t)
+                        used_targets += 1
+                if used_targets > 0:
+                    loss_rec = loss_rec / used_targets
+                else:
+                    loss_rec = torch.tensor(0.0, device=X.device, dtype=X.dtype)
+
                 loss_sparse = Z.abs().mean() * 1e-2
                 loss = loss_rec + loss_sparse
             scaler.scale(loss).backward()
@@ -408,7 +510,19 @@ def main():
             scaler.update()
         else:
             Y_hat, Z = model(X)
-            loss_rec = mse(Y_hat, Y)
+
+            loss_rec = 0.0
+            used_targets = 0
+            for t_idx, Y_t in enumerate(Y_targets):
+                if t_idx < Y_hat.shape[2]:
+                    y_pred = Y_hat[:, :, t_idx, :]
+                    loss_rec = loss_rec + mse(y_pred, Y_t)
+                    used_targets += 1
+            if used_targets > 0:
+                loss_rec = loss_rec / used_targets
+            else:
+                loss_rec = torch.tensor(0.0, device=X.device, dtype=X.dtype)
+
             loss_sparse = Z.abs().mean() * 1e-2
             loss = loss_rec + loss_sparse
             loss.backward()
@@ -420,18 +534,19 @@ def main():
             feature_max_activations = torch.maximum(feature_max_activations, batch_max)
             
             # NEW: Track MLP→CLT correlations (VECTORIZED for speed)
-            # For each timestep where a feature is active, record which MLP neurons are also active
-            # Y shape: [B, T, hidden_dim] - MLP activations
-            # Z shape: [B, T, feature_dim] - CLT features
-            Y_flat = Y.flatten(0, 1)  # [B*T, hidden_dim]
-            Z_flat = Z.flatten(0, 1)  # [B*T, feature_dim]
-            
-            # Vectorized co-activation computation (match dtypes!)
-            active_features = (Z_flat > 0).to(Y_flat.dtype)  # [B*T, feature_dim] - match Y dtype
-            # Compute weighted average: for each feature, average MLP activations when it's active
-            # Y_flat.T @ active_features = [hidden_dim, feature_dim] - sum of MLP values when each feature is active
-            mlp_feature_correlations += (Y_flat.abs().T @ active_features).to(mlp_feature_correlations.dtype)  # [hidden_dim, feature_dim]
-            mlp_feature_counts += active_features.sum(dim=0).unsqueeze(0).to(mlp_feature_counts.dtype)  # [1, feature_dim] -> broadcast to [hidden_dim, feature_dim]
+            # For each timestep where a feature is active, record which MLP neurons are also active.
+            # Use the primary target (L+1) as the MLP activation reference.
+            if len(Y_targets) > 0:
+                Y_main = Y_targets[0]  # [B, T, hidden_dim]
+                Y_flat = Y_main.flatten(0, 1)  # [B*T, hidden_dim]
+                Z_flat = Z.flatten(0, 1)       # [B*T, feature_dim]
+                
+                # Vectorized co-activation computation (match dtypes!)
+                active_features = (Z_flat > 0).to(Y_flat.dtype)  # [B*T, feature_dim]
+                # Compute weighted average: for each feature, average MLP activations when it's active
+                # Y_flat.T @ active_features = [hidden_dim, feature_dim] - sum of MLP values when each feature is active
+                mlp_feature_correlations += (Y_flat.abs().T @ active_features).to(mlp_feature_correlations.dtype)
+                mlp_feature_counts += active_features.sum(dim=0).unsqueeze(0).to(mlp_feature_counts.dtype)
         
         # Compute L0 sparsity
         with torch.no_grad():
@@ -459,21 +574,38 @@ def main():
             # Load val samples if not loaded yet
             if not all_val_samples:
                 for x_path, y_path in val_batch_pairs[:2]:
-                    samples = load_and_unpack_batch(x_path, y_path, cache=batch_cache)
+                    samples = load_and_unpack_batch(x_path, y_path, n_targets, cache=batch_cache)
                     all_val_samples.extend(samples)
             
             with torch.no_grad():
                 for _ in range(min(args.val_samples, len(all_val_samples))):
                     try:
                         val_sample = [random.choice(all_val_samples)]
-                        Xv, Yv = collate_samples(val_sample, device=device, target_len=target_len)
+                        Xv, Yv_targets = collate_samples(
+                            val_sample,
+                            device=device,
+                            target_len=target_len,
+                            max_tokens=4096,
+                            n_targets=n_targets,
+                        )
                         if device.type == 'cuda' and args.dtype in ('fp16', 'bf16'):
                             Xv = Xv.to(amp_dtype)
-                            Yv = Yv.to(amp_dtype)
+                            Yv_targets = [Y_t.to(amp_dtype) for Y_t in Yv_targets]
                         Yv_hat, Zv = model(Xv)
-                        val_loss = mse(Yv_hat, Yv).item()
+
+                        # Validation loss over all targets
+                        v_loss_rec = 0.0
+                        v_used_targets = 0
+                        for t_idx, Yv_t in enumerate(Yv_targets):
+                            if t_idx < Yv_hat.shape[2]:
+                                yv_pred = Yv_hat[:, :, t_idx, :]
+                                v_loss_rec = v_loss_rec + mse(yv_pred, Yv_t).item()
+                                v_used_targets += 1
+                        if v_used_targets > 0:
+                            v_loss_rec = v_loss_rec / v_used_targets
+
                         val_l0 = (Zv > 0).float().mean().item() * 100
-                        val_losses.append(val_loss)
+                        val_losses.append(v_loss_rec)
                         val_l0s.append(val_l0)
                     except Exception:
                         continue

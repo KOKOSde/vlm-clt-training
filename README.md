@@ -168,18 +168,6 @@ for source_layer in range(current_layer):
     mlp_output += decoder[decoder_idx](features)
 ```
 
----
-
-## 📊 Results
-
-### LLaVA-1.5-7B on AMBER Benchmark
-
-| Metric | Baseline | CLT Replacement |
-|--------|----------|-----------------|
-| **Generation Quality** | 100% | **~50%** ✅ |
-| **CHAIR Score** | 0.42 | **0.45** |
-| **Coverage** | 0.68 | **0.65** |
-| **Attribution Graphs** | N/A | ✅ **Yes** |
 
 ---
 

@@ -39,10 +39,10 @@ Since activations are large (496MB+), they are not included in the Git repositor
 
 ### Option 1: Use Existing Local Activations
 
-If you're on the same system where activations were captured:
+If you have pre-captured activations locally:
 
 ```bash
-ln -s /scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber ./activations_amber
+ln -s /path/to/your/activations ./activations
 ```
 
 ### Option 2: Upload to Hugging Face Hub
@@ -51,8 +51,8 @@ To share activations publicly:
 
 ```bash
 python scripts/upload_activations_to_hf.py \
-  --activations_dir /scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber \
-  --repo_id KOKOSde/llava-amber-activations \
+  --activations_dir ./activations \
+  --repo_id your-username/your-activations \
   --token YOUR_HF_TOKEN
 ```
 

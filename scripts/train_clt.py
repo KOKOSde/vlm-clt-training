@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Train a cross-layer sparse transcoder (CLT) for one LLaVA layer L.
+Train a Cross-Layer Transcoder (CLT) for a single layer.
 
-Architecture (CLT-style, similar to Qwen CLT):
+Works with any LLM/VLM that has pre-captured activations in the expected format.
+
+Architecture:
 - Encoder:  LayerNorm(hidden_dim) → Linear(hidden_dim → feature_dim) → ReLU / TopK
 - Decoder:  Linear(feature_dim → hidden_dim * n_targets)
             reshaped to [B, T, n_targets, hidden_dim] predicting:
@@ -39,7 +41,7 @@ import queue
 
 class Transcoder(nn.Module):
     """
-    Cross-Layer Transcoder for one LLaVA layer L (multi-target CLT).
+    Cross-Layer Transcoder (CLT) for a single layer.
 
     - Reads residual stream at layer L
     - Writes to MLP outputs of multiple future layers (L+1..L+n_targets)

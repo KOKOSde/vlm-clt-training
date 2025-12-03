@@ -1,9 +1,12 @@
-model_id: "llava-hf/llava-1.5-7b-hf"
+# Example config for CLT training
+# Update paths to match your environment
 
-# Train all layers for LLaVA-1.5-7B (32 layers total: 0-31)
+model_id: "your-model-id"  # e.g., "llava-hf/llava-1.5-7b-hf", "Qwen/Qwen2-VL-7B"
+
+# Layers to train (adjust based on your model's architecture)
 layers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
 
-# Training feature dimension (2x hidden_dim for 7B LLaVA)
+# Training feature dimension (typically 2x hidden_dim)
 feature_dim: 8192
 
 # Sequence and batching
@@ -11,18 +14,14 @@ seq_len: 512
 batch_size: 1
 grad_accum_steps: 8
 
-# Data
+# Data paths (update these for your setup)
 data:
-  sycophancy_dir: "/scratch/fkalghan/circuit_discovery_and_supression/data/sycophancy"
-  train_jsonl: "/scratch/fkalghan/circuit_discovery_and_supression/data/llava_instruct_150k/train.jsonl"
-  val_jsonl: "/scratch/fkalghan/circuit_discovery_and_supression/data/llava_instruct_150k/val.jsonl"
-  test_jsonl: "/scratch/fkalghan/circuit_discovery_and_supression/data/llava_instruct_150k/val.jsonl"
+  train_jsonl: "./data/train.jsonl"
+  val_jsonl: "./data/val.jsonl"
+  test_jsonl: "./data/test.jsonl"
 
-# Outputs (use separate dirs for LLaVA)
+# Output directories
 outputs:
-  activations_dir: "/scratch/fkalghan/circuit_discovery_and_supression/activations_llava15_7b"
-  transcoders_dir: "/scratch/fkalghan/circuit_discovery_and_supression/transcoders_llava15_7b"
-  logs_dir: "/scratch/fkalghan/circuit_discovery_and_supression/logs_llava15_7b"
-
-
-
+  activations_dir: "./activations"
+  transcoders_dir: "./checkpoints"
+  logs_dir: "./logs"

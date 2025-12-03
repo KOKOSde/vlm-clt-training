@@ -1,6 +1,6 @@
 #!/bin/bash
-# Train a single CLT layer using the working training script
-# Usage: bash scripts/train_single_layer.sh LAYER_NUM
+# Train a single CLT layer
+# Usage: bash scripts/train_single_layer.sh LAYER_NUM [CONFIG_PATH]
 
 set -e
 
@@ -11,14 +11,11 @@ echo "========================================="
 echo "Training CLT for Layer $LAYER"
 echo "========================================="
 
-source /home/fkalghan/.venv/bin/activate
-
 cd "$(dirname "$0")/.."
 
-python scripts/train_llava_clt.py \
+python scripts/train_clt.py \
   --config "$CONFIG" \
   --layer "$LAYER" \
-  --clt-mode \
   --steps 5000 \
   --lr 3e-4 \
   --feature-dim 8192 \
@@ -31,4 +28,3 @@ python scripts/train_llava_clt.py \
 echo "========================================="
 echo "Training complete for Layer $LAYER!"
 echo "========================================="
-

@@ -46,9 +46,9 @@ python scripts/download_activations.py --dataset amber
 ```
 
 **Option 2: Use existing activations**
-If you already have activations at `/scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber/`:
+If you already have pre-captured activations:
 ```bash
-ln -s /scratch/fkalghan/circuit_discovery_and_supression/benchmarks_llava/activations/amber ./activations
+ln -s /path/to/your/activations ./activations
 ```
 
 **Option 3: Capture your own**
@@ -89,10 +89,9 @@ bash scripts/train_single_layer.sh 0  # Train layer 0
 **Or directly with Python**:
 
 ```bash
-python scripts/train_llava_clt.py \
+python scripts/train_clt.py \
   --config config.yaml \
   --layer 0 \
-  --clt-mode \
   --steps 5000 \
   --lr 3e-4 \
   --feature-dim 8192 \
@@ -119,8 +118,8 @@ vlm-clt-training/
 │   └── trainer.py           # Training loop
 ├── scripts/                  # Training scripts
 │   ├── capture_activations.py  # Capture VLM activations
-│   ├── train_llava_clt.sh     # Train CLTs for LLaVA
-│   └── evaluate_replacement.py # Test replacement model
+│   ├── train_clt.py            # Train CLTs (model-agnostic)
+│   └── train_single_layer.sh   # Helper script for single layer
 ├── examples/                 # Example notebooks
 │   ├── 01_capture_activations.ipynb
 │   ├── 02_train_clt.ipynb
